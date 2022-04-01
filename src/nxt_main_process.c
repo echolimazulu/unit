@@ -1054,6 +1054,10 @@ nxt_main_port_socket_handler(nxt_task_t *task, nxt_port_recv_msg_t *msg)
     ls.read_after_accept = 1;
     ls.flags = NXT_NONBLOCK;
 
+#if (NXT_HAVE_UNIX_DOMAIN)
+    ls.access = (S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH | S_IWOTH);
+#endif
+
     nxt_debug(task, "listening socket \"%*s\"",
               (size_t) sa->length, nxt_sockaddr_start(sa));
 
