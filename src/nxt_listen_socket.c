@@ -121,7 +121,27 @@ nxt_listen_socket_create(nxt_task_t *task, nxt_mp_t *mp,
 #endif
 
     if (nxt_socket_bind(task, s, sa) != NXT_OK) {
+
+#if (NXT_HAVE_UNIX_DOMAIN)
+
+        if (family == AF_UNIX && nxt_socket_errno == EADDRINUSE) {
+            name = (nxt_file_name_t *) sa->u.sockaddr_un.sun_path;
+
+            if (nxt_socket_release_by_path(task, name) != NXT_OK) {
+                goto fail;
+            }
+
+            if (nxt_socket_bind(task, s, sa) != NXT_OK) {
+                goto fail;
+            }
+        } else {
+            goto fail;
+        }
+
+#else
         goto fail;
+#endif
+
     }
 
 #if (NXT_HAVE_UNIX_DOMAIN)

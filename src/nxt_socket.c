@@ -358,3 +358,41 @@ nxt_socket_error_level(nxt_err_t err)
         return NXT_LOG_ALERT;
     }
 }
+
+
+nxt_int_t
+nxt_socket_release_by_path(nxt_task_t *task, nxt_file_name_t *name)
+{
+    nxt_file_t          file;
+    nxt_file_info_t     fi;
+    nxt_int_t           ret;
+
+    (void) nxt_memzero(&file, sizeof(file));
+    (void) nxt_memzero(&fi, sizeof(fi));
+
+    file.fd = NXT_FILE_INVALID;
+    file.name = name;
+
+    ret = nxt_file_info(&file, &fi);
+
+    if (nxt_fast_path(ret == NXT_OK && nxt_is_sock(&fi))) {
+        ret = nxt_file_delete(file.name);
+        if (nxt_fast_path(ret == NXT_OK)) {
+            return NXT_OK;
+        }
+
+        nxt_alert(task, "nxt_file_delete(\"%FN\") failed %E",
+                  file.name, nxt_socket_errno);
+
+        return NXT_ERROR;
+    } else if (nxt_fast_path(ret == NXT_ERROR
+               && nxt_socket_errno == NXT_ENOENT))
+    {
+        return NXT_OK;
+    }
+
+    nxt_alert(task, "nxt_file_info(\"%FN\") failed %E",
+              file.name, nxt_socket_errno);
+
+    return NXT_ERROR;
+}
