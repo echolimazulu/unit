@@ -8,7 +8,7 @@
 
 
 static u_char *nxt_listen_socket_log_handler(void *ctx, u_char *pos,
-    u_char *last);
+    u_char *end);
 
 
 nxt_int_t
@@ -35,10 +35,10 @@ nxt_listen_socket_create(nxt_task_t *task, nxt_mp_t *mp,
     nxt_socket_t       s;
     nxt_thread_t       *thr;
     nxt_sockaddr_t     *sa;
+    nxt_err_t          err;
 #if (NXT_HAVE_UNIX_DOMAIN)
     int                ret;
     u_char             *p;
-    nxt_err_t          err;
     nxt_socket_t       ts;
     nxt_sockaddr_t     *orig_sa;
     nxt_file_name_t    *name, *tmp;
@@ -56,12 +56,29 @@ nxt_listen_socket_create(nxt_task_t *task, nxt_mp_t *mp,
 
     family = sa->u.sockaddr.sa_family;
 
-    s = nxt_socket_create(task, family, sa->type, 0, ls->flags);
+    s = nxt_socket_create(task, family, sa->type, 0, ls->flags, &err);
     if (s == -1) {
+
+#if (NXT_INET6)
+
+        if (err == EAFNOSUPPORT && sa->u.sockaddr.sa_family == AF_INET6) {
+            ls->error = NXT_SOCKET_ERROR_NOINET6;
+        }
+
+#endif
+
+        if (ls->start != NULL && ls->end != NULL)
+            ls->end = nxt_sprintf(ls->start, ls->end,
+                                  "nxt_socket_create(\"%*s\") failed %E",
+                                  (size_t) sa->length, nxt_sockaddr_start(sa), err);
         goto fail;
     }
 
     if (nxt_socket_setsockopt(task, s, SOL_SOCKET, SO_REUSEADDR, 1) != NXT_OK) {
+        if (ls->start != NULL && ls->end != NULL)
+            ls->end = nxt_sprintf(ls->start, ls->end,
+                                  "nxt_socket_setsockopt(\"%*s\", SO_REUSEADDR) failed",
+                                  (size_t) sa->length, nxt_sockaddr_start(sa));
         goto fail;
     }
 
@@ -72,9 +89,14 @@ nxt_listen_socket_create(nxt_task_t *task, nxt_mp_t *mp,
 
         ipv6only = (ls->ipv6only == 1);
 
-        /* Ignore possible error. TODO: why? */
-        (void) nxt_socket_setsockopt(task, s, IPPROTO_IPV6, IPV6_V6ONLY,
-                                     ipv6only);
+        if (nxt_socket_setsockopt(task, s, IPPROTO_IPV6, IPV6_V6ONLY,
+                                  ipv6only) != NXT_OK) {
+            if (ls->start != NULL && ls->end != NULL)
+                ls->end = nxt_sprintf(ls->start, ls->end,
+                                      "nxt_socket_setsockopt(\"%*s\", IPV6_V6ONLY) failed",
+                                      (size_t) sa->length, nxt_sockaddr_start(sa));
+            goto fail;
+        }
     }
 
 #endif
@@ -100,6 +122,10 @@ nxt_listen_socket_create(nxt_task_t *task, nxt_mp_t *mp,
 
         sa = nxt_sockaddr_alloc(mp, sa->socklen + 4, sa->length + 4);
         if (sa == NULL) {
+            if (ls->start != NULL && ls->end != NULL)
+                ls->end = nxt_sprintf(ls->start, ls->end,
+                                      "nxt_sockaddr_alloc(%*s) failed",
+                                      (size_t) sa->length, nxt_sockaddr_start(sa));
             goto fail;
         }
 
@@ -112,7 +138,15 @@ nxt_listen_socket_create(nxt_task_t *task, nxt_mp_t *mp,
 
         nxt_sockaddr_text(sa);
 
-        (void) unlink(sa->u.sockaddr_un.sun_path);
+        name = (nxt_file_name_t *) sa->u.sockaddr_un.sun_path;
+
+        if (nxt_socket_release_by_path(name) != NXT_OK) {
+            if (ls->start != NULL && ls->end != NULL)
+                ls->end = nxt_sprintf(ls->start, ls->end,
+                                      "nxt_socket_release_by_path(%FN) failed",
+                                      name);
+            goto fail;
+        }
 
     } else {
         orig_sa = NULL;
@@ -120,28 +154,48 @@ nxt_listen_socket_create(nxt_task_t *task, nxt_mp_t *mp,
 
 #endif
 
-    if (nxt_socket_bind(task, s, sa) != NXT_OK) {
+    if (nxt_socket_bind(task, s, sa, &err) != NXT_OK) {
 
 #if (NXT_HAVE_UNIX_DOMAIN)
 
-        if (family == AF_UNIX && nxt_socket_errno == EADDRINUSE) {
-            name = (nxt_file_name_t *) sa->u.sockaddr_un.sun_path;
+        if (sa->u.sockaddr.sa_family == AF_UNIX) {
+            switch (err) {
 
-            if (nxt_socket_release_by_path(task, name) != NXT_OK) {
-                goto fail;
+            case EACCES:
+                ls->error = NXT_SOCKET_ERROR_ACCESS;
+                break;
+
+            case ENOENT:
+            case ENOTDIR:
+                ls->error = NXT_SOCKET_ERROR_PATH;
+                break;
             }
 
-            if (nxt_socket_bind(task, s, sa) != NXT_OK) {
-                goto fail;
+        } else
+#endif
+        {
+            switch (err) {
+
+                case EACCES:
+                    ls->error = NXT_SOCKET_ERROR_PORT;
+                    break;
+
+                case EADDRINUSE:
+                    ls->error = NXT_SOCKET_ERROR_INUSE;
+                    break;
+
+                case EADDRNOTAVAIL:
+                    ls->error = NXT_SOCKET_ERROR_NOADDR;
+                    break;
             }
-        } else {
-            goto fail;
         }
 
-#else
+        if (ls->start != NULL && ls->end != NULL)
+            ls->end = nxt_sprintf(ls->start, ls->end,
+                                  "nxt_socket_bind(%d, %*s) failed %E",
+                                  s, (size_t) sa->length, nxt_sockaddr_start(sa),
+                                  err);
         goto fail;
-#endif
-
     }
 
 #if (NXT_HAVE_UNIX_DOMAIN)
@@ -152,6 +206,10 @@ nxt_listen_socket_create(nxt_task_t *task, nxt_mp_t *mp,
         access = (ls->access) ? ls->access : (S_IRUSR | S_IWUSR);
 
         if (nxt_file_set_access(name, access) != NXT_OK) {
+            if (ls->start != NULL && ls->end != NULL)
+                ls->end = nxt_sprintf(ls->start, ls->end,
+                                      "nxt_file_set_access(%FN) failed",
+                                      name);
             goto listen_fail;
         }
     }
@@ -161,16 +219,25 @@ nxt_listen_socket_create(nxt_task_t *task, nxt_mp_t *mp,
     nxt_debug(task, "listen(%d, %d)", s, ls->backlog);
 
     if (listen(s, ls->backlog) != 0) {
+        err = nxt_socket_errno;
         nxt_alert(task, "listen(%d, %d) failed %E",
-                  s, ls->backlog, nxt_socket_errno);
+                  s, ls->backlog, err);
+        if (ls->start != NULL && ls->end != NULL)
+            ls->end = nxt_sprintf(ls->start, ls->end,
+                                  "listen(%d, %d) failed %E",
+                                  s, ls->backlog, err);
         goto listen_fail;
     }
 
 #if (NXT_HAVE_UNIX_DOMAIN)
 
     if (orig_sa != NULL) {
-        ts = nxt_socket_create(task, AF_UNIX, SOCK_STREAM, 0, 0);
+        ts = nxt_socket_create(task, AF_UNIX, SOCK_STREAM, 0, 0, NULL);
         if (ts == -1) {
+            if (ls->start != NULL && ls->end != NULL)
+                ls->end = nxt_sprintf(ls->start, ls->end,
+                                      "nxt_socket_create(%*s) failed",
+                                      (size_t) sa->length, nxt_sockaddr_start(sa));
             goto listen_fail;
         }
 
@@ -184,7 +251,11 @@ nxt_listen_socket_create(nxt_task_t *task, nxt_mp_t *mp,
             nxt_alert(task, "connect(%d, %*s) succeed, address already in use",
                       ts, (size_t) orig_sa->length,
                       nxt_sockaddr_start(orig_sa));
-
+            if (ls->start != NULL && ls->end != NULL)
+                ls->end = nxt_sprintf(ls->start, ls->end,
+                                      "connect(%d, %*s) succeed, address already in use",
+                                      ts, (size_t) orig_sa->length,
+                                      nxt_sockaddr_start(orig_sa));
             goto listen_fail;
         }
 
@@ -192,7 +263,11 @@ nxt_listen_socket_create(nxt_task_t *task, nxt_mp_t *mp,
             nxt_alert(task, "connect(%d, %*s) failed %E",
                       ts, (size_t) orig_sa->length,
                       nxt_sockaddr_start(orig_sa), err);
-
+            if (ls->start != NULL && ls->end != NULL)
+                ls->end = nxt_sprintf(ls->start, ls->end,
+                                      "connect(%d, %*s) failed %E",
+                                      ts, (size_t) orig_sa->length,
+                                      nxt_sockaddr_start(orig_sa), err);
             goto listen_fail;
         }
 
@@ -200,6 +275,10 @@ nxt_listen_socket_create(nxt_task_t *task, nxt_mp_t *mp,
         name = (nxt_file_name_t *) orig_sa->u.sockaddr_un.sun_path;
 
         if (nxt_file_rename(tmp, name) != NXT_OK) {
+            if (ls->start != NULL && ls->end != NULL)
+                ls->end = nxt_sprintf(ls->start, ls->end,
+                                      "nxt_file_rename(%FN, %FN) failed",
+                                      tmp, name);
             goto listen_fail;
         }
     }

@@ -13,9 +13,10 @@ static const char *nxt_socket_sockopt_name(nxt_uint_t level,
 
 nxt_socket_t
 nxt_socket_create(nxt_task_t *task, nxt_uint_t domain, nxt_uint_t type,
-    nxt_uint_t protocol, nxt_uint_t flags)
+    nxt_uint_t protocol, nxt_uint_t flags, nxt_err_t *errnum)
 {
     nxt_socket_t  s;
+    nxt_err_t     err;
 
 #if (NXT_HAVE_SOCK_NONBLOCK)
 
@@ -28,8 +29,12 @@ nxt_socket_create(nxt_task_t *task, nxt_uint_t domain, nxt_uint_t type,
     s = socket(domain, type, protocol);
 
     if (nxt_slow_path(s == -1)) {
+        err = nxt_socket_errno;
+        if (errnum != NULL) {
+            *errnum = err;
+        }
         nxt_alert(task, "socket(%ui, 0x%uXi, %ui) failed %E",
-                  domain, type, protocol, nxt_socket_errno);
+                  domain, type, protocol, err);
         return s;
     }
 
@@ -172,8 +177,9 @@ nxt_socket_sockopt_name(nxt_uint_t level, nxt_uint_t sockopt)
 
 
 nxt_int_t
-nxt_socket_bind(nxt_task_t *task, nxt_socket_t s, nxt_sockaddr_t *sa)
+nxt_socket_bind(nxt_task_t *task, nxt_socket_t s, nxt_sockaddr_t *sa, nxt_err_t *errnum)
 {
+    nxt_err_t err;
     nxt_debug(task, "bind(%d, %*s)", s, (size_t) sa->length,
               nxt_sockaddr_start(sa));
 
@@ -181,8 +187,14 @@ nxt_socket_bind(nxt_task_t *task, nxt_socket_t s, nxt_sockaddr_t *sa)
         return NXT_OK;
     }
 
+    err = nxt_socket_errno;
+
+    if (errnum != NULL) {
+        *errnum = err;
+    }
+
     nxt_alert(task, "bind(%d, %*s) failed %E",
-              s, (size_t) sa->length, nxt_sockaddr_start(sa), nxt_socket_errno);
+              s, (size_t) sa->length, nxt_sockaddr_start(sa), err);
 
     return NXT_ERROR;
 }
@@ -361,7 +373,7 @@ nxt_socket_error_level(nxt_err_t err)
 
 
 nxt_int_t
-nxt_socket_release_by_path(nxt_task_t *task, nxt_file_name_t *name)
+nxt_socket_release_by_path(nxt_file_name_t *name)
 {
     nxt_file_t          file;
     nxt_file_info_t     fi;
@@ -376,23 +388,11 @@ nxt_socket_release_by_path(nxt_task_t *task, nxt_file_name_t *name)
     ret = nxt_file_info(&file, &fi);
 
     if (nxt_fast_path(ret == NXT_OK && nxt_is_sock(&fi))) {
-        ret = nxt_file_delete(file.name);
-        if (nxt_fast_path(ret == NXT_OK)) {
-            return NXT_OK;
-        }
-
-        nxt_alert(task, "nxt_file_delete(\"%FN\") failed %E",
-                  file.name, nxt_socket_errno);
-
-        return NXT_ERROR;
+        return nxt_file_delete(file.name);
     } else if (nxt_fast_path(ret == NXT_ERROR
-               && nxt_socket_errno == NXT_ENOENT))
-    {
+               && file.error == NXT_ENOENT)) {
         return NXT_OK;
     }
-
-    nxt_alert(task, "nxt_file_info(\"%FN\") failed %E",
-              file.name, nxt_socket_errno);
 
     return NXT_ERROR;
 }

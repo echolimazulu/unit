@@ -103,7 +103,7 @@ typedef union {
 
 
 NXT_EXPORT nxt_socket_t nxt_socket_create(nxt_task_t *task, nxt_uint_t family,
-    nxt_uint_t type, nxt_uint_t protocol, nxt_uint_t flags);
+    nxt_uint_t type, nxt_uint_t protocol, nxt_uint_t flags, nxt_err_t *errnum);
 NXT_EXPORT void nxt_socket_defer_accept(nxt_task_t *task, nxt_socket_t s,
     nxt_sockaddr_t *sa);
 NXT_EXPORT nxt_int_t nxt_socket_getsockopt(nxt_task_t *task, nxt_socket_t s,
@@ -111,7 +111,7 @@ NXT_EXPORT nxt_int_t nxt_socket_getsockopt(nxt_task_t *task, nxt_socket_t s,
 NXT_EXPORT nxt_int_t nxt_socket_setsockopt(nxt_task_t *task, nxt_socket_t s,
     nxt_uint_t level, nxt_uint_t sockopt, int val);
 NXT_EXPORT nxt_int_t nxt_socket_bind(nxt_task_t *task, nxt_socket_t s,
-    nxt_sockaddr_t *sa);
+    nxt_sockaddr_t *sa, nxt_err_t *errnum);
 NXT_EXPORT nxt_int_t nxt_socket_connect(nxt_task_t *task, nxt_socket_t s,
     nxt_sockaddr_t *sa);
 NXT_EXPORT void nxt_socket_shutdown(nxt_task_t *task, nxt_socket_t s,
@@ -127,8 +127,7 @@ NXT_EXPORT ssize_t nxt_socketpair_send(nxt_fd_event_t *ev, nxt_fd_t *fd,
     nxt_iobuf_t *iob, nxt_uint_t niob);
 NXT_EXPORT ssize_t nxt_socketpair_recv(nxt_fd_event_t *ev,
     nxt_iobuf_t *iob, nxt_uint_t niob, void *oob);
-NXT_EXPORT nxt_int_t nxt_socket_release_by_path(nxt_task_t *task,
-    nxt_file_name_t *name);
+NXT_EXPORT nxt_int_t nxt_socket_release_by_path(nxt_file_name_t *name);
 
 
 #define                                                                       \
